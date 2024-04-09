@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    environment {
+        TF_WORKSPACE = 'dev'
+        TF_STATE_BUCKET = 'your-tf-state-bucket'
+        AWS_REGION = 'your-aws-region'
+        ECR_REGISTRY = 'your-ecr-registry'
+        EKS_CLUSTER_NAME = 'your-eks-cluster'
+    }
+
+    stages {
+        stage('Checkout Terraform') {
+            steps {
+                // Checkout Terraform code from your repository
+                git 'https://github.com/your/terraform-repo.git'
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                // Initialize Terraform and configure backend
+                sh 'terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$AWS_REGION"'
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                // Generate and review Terraform plan
+                sh 'terraform plan -out=tfplan'
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                branch 'main'
+            }
+            steps {
+                // Apply Terraform changes
+                sh 'terraform apply -auto-approve tfplan'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                // Build Docker image
+                sh 'docker build -t my-nginx-app .'
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                // Tag the Docker image
+                sh 'docker tag my-nginx-app:latest $ECR_REGISTRY/my-nginx-app:latest'
+                // Login to ECR
+                withCredentials([usernamePassword(credentialsId: 'ecr-credentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh 'docker login -u $USERNAME -p $PASSWORD $ECR_REGISTRY'
+                }
+                // Push image to ECR
+                sh 'docker push $ECR_REGISTRY/my-nginx-app:latest'
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                // Configure kubectl to use EKS cluster
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh "cp $KUBECONFIG_FILE ~/.kube/config"
+                }
+                // Update Kubernetes deployment with new image
+                sh 'kubectl set image deployment/nginx-deployment nginx-container=$ECR_REGISTRY/my-nginx-app:latest'
+            }
+        }
+    }
+
+    post {
+        always {
+            // Clean up temporary files or resources if needed
+            sh 'rm -rf .terraform'
+            sh 'rm -f tfplan'
+        }
+    }
+}
