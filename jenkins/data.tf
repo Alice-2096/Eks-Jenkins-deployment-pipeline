@@ -1,6 +1,5 @@
 data "aws_ami" "jenkins_ami" {
   most_recent = true
-  name_regex  = "^myami-\\d{3}"
 
   filter {
     name   = "name"
